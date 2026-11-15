@@ -1,0 +1,12 @@
+import "../src/sync.noqeri"
+
+function require(ok: bool): void {
+    if !ok { let invalid: *u8 = 0 as *u8 print(invalid[0]) }
+}
+
+require(syncHandleValid(1 as usize))
+require(!syncHandleValid(0 as usize))
+require(syncCapacityValid(32 as usize))
+require(!syncCapacityValid(0 as usize))
+print("noqeri-sync package tests: OK")
+

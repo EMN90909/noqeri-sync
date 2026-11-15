@@ -1,0 +1,10 @@
+package {
+    name: "noqeri/sync"
+    version: "1.0.0"
+    edition: "2026"
+    entry: "src/sync.noqeri"
+    profile: "library"
+    target: "portable"
+    license: "Apache-2.0"
+}
+

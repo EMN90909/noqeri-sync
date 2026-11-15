@@ -1,0 +1,21 @@
+// SPDX-License-Identifier: Apache-2.0
+module noqeri.sync
+
+extern function syncMutexCreate(): usize
+extern function syncMutexLock(handle: usize): bool
+extern function syncMutexUnlock(handle: usize): bool
+extern function syncChannelCreate(capacity: usize): usize
+extern function syncChannelSend(handle: usize, value: u64): bool
+extern function syncChannelReceive(handle: usize): u64
+extern function syncLastStatus(): int
+
+export function syncHandleValid(handle: usize): bool { return handle != 0 as usize }
+export function syncCapacityValid(capacity: usize): bool { return capacity > 0 as usize && capacity <= 1048576 as usize }
+export function syncNewMutex(): usize { return syncMutexCreate() }
+export function syncLock(handle: usize): bool { if !syncHandleValid(handle) { return false } return syncMutexLock(handle) }
+export function syncUnlock(handle: usize): bool { if !syncHandleValid(handle) { return false } return syncMutexUnlock(handle) }
+export function syncNewChannel(capacity: usize): usize { if !syncCapacityValid(capacity) { return 0 as usize } return syncChannelCreate(capacity) }
+export function syncSend(handle: usize, value: u64): bool { if !syncHandleValid(handle) { return false } return syncChannelSend(handle, value) }
+export function syncReceive(handle: usize): u64 { if !syncHandleValid(handle) { return 0 as u64 } return syncChannelReceive(handle) }
+export function syncStatusOk(): bool { return syncLastStatus() == 0 }
+
