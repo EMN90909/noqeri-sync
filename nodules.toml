@@ -1,0 +1,9 @@
+[nodule]
+format = "ndl-1"
+name = "noqeri/sync"
+version = "1.0.0"
+entry = "src/sync.noqeri"
+kind = "library"
+target = "portable"
+license = "Apache-2.0"
+description = "Official noqeri-sync package for the Noqeri ecosystem"
