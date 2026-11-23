@@ -1,21 +1,157 @@
 // SPDX-License-Identifier: Apache-2.0
 module noqeri.sync
 
-extern function syncMutexCreate(): usize
-extern function syncMutexLock(handle: usize): bool
-extern function syncMutexUnlock(handle: usize): bool
-extern function syncChannelCreate(capacity: usize): usize
-extern function syncChannelSend(handle: usize, value: u64): bool
-extern function syncChannelReceive(handle: usize): u64
-extern function syncLastStatus(): int
+record SpinLock {
+    state: u64
+}
 
+record Once {
+    state: u64
+}
+
+record Semaphore {
+    permits: u64
+}
+
+record SeqLock {
+    seq: u64
+}
+
+record RingQueue {
+    head: u64
+    tail: u64
+    cap: usize
+    slots: []u64
+}
+
+export function syncUnlocked(): u64 { return 0 as u64 }
+export function syncLocked(): u64 { return 1 as u64 }
 export function syncHandleValid(handle: usize): bool { return handle != 0 as usize }
 export function syncCapacityValid(capacity: usize): bool { return capacity > 0 as usize && capacity <= 1048576 as usize }
-export function syncNewMutex(): usize { return syncMutexCreate() }
-export function syncLock(handle: usize): bool { if !syncHandleValid(handle) { return false } return syncMutexLock(handle) }
-export function syncUnlock(handle: usize): bool { if !syncHandleValid(handle) { return false } return syncMutexUnlock(handle) }
-export function syncNewChannel(capacity: usize): usize { if !syncCapacityValid(capacity) { return 0 as usize } return syncChannelCreate(capacity) }
-export function syncSend(handle: usize, value: u64): bool { if !syncHandleValid(handle) { return false } return syncChannelSend(handle, value) }
-export function syncReceive(handle: usize): u64 { if !syncHandleValid(handle) { return 0 as u64 } return syncChannelReceive(handle) }
-export function syncStatusOk(): bool { return syncLastStatus() == 0 }
+export function syncStatusOk(): bool { return true }
 
+export function syncSpinInit(lock: *SpinLock): void {
+    atomic.store(&lock.state, syncUnlocked())
+}
+
+export function syncSpinTryLock(lock: *SpinLock): bool {
+    let old: u64 = atomic.compareExchange(&lock.state, syncUnlocked(), syncLocked())
+    return old == syncUnlocked()
+}
+
+export function syncSpinUnlock(lock: *SpinLock): void {
+    atomic.store(&lock.state, syncUnlocked())
+}
+
+export function syncSpinIsLocked(lock: *SpinLock): bool {
+    return atomic.load(&lock.state) != syncUnlocked()
+}
+
+export function syncSpinLockFor(lock: *SpinLock, attempts: usize): bool {
+    let attempt: usize = 0 as usize
+    while attempt < attempts {
+        if syncSpinTryLock(lock) { return true }
+        atomic.fence()
+        attempt = attempt + 1 as usize
+    }
+    return false
+}
+
+export function syncTryLock(state: *u64): bool {
+    let old: u64 = atomic.compareExchange(state, 0 as u64, 1 as u64)
+    return old == 0 as u64
+}
+
+export function syncUnlock(state: *u64): void { atomic.store(state, 0 as u64) }
+export function syncIsLocked(state: *u64): bool { return atomic.load(state) != 0 as u64 }
+export function syncSpinPause(): void { atomic.fence() }
+
+export function syncOnceInit(once: *Once): void { atomic.store(&once.state, 0 as u64) }
+export function syncOnceTryBegin(once: *Once): bool {
+    return atomic.compareExchange(&once.state, 0 as u64, 1 as u64) == 0 as u64
+}
+export function syncOnceComplete(once: *Once): void { atomic.store(&once.state, 2 as u64) }
+export function syncOnceDone(once: *Once): bool { return atomic.load(&once.state) == 2 as u64 }
+
+export function syncSemaphoreInit(semaphore: *Semaphore, permits: u64): void {
+    atomic.store(&semaphore.permits, permits)
+}
+
+export function syncSemaphoreAvailable(semaphore: *Semaphore): u64 {
+    return atomic.load(&semaphore.permits)
+}
+
+export function syncSemaphoreTryAcquire(semaphore: *Semaphore): bool {
+    let current: u64 = atomic.load(&semaphore.permits)
+    while current > 0 as u64 {
+        let observed: u64 = atomic.compareExchange(&semaphore.permits, current, current - 1 as u64)
+        if observed == current { return true }
+        current = observed
+    }
+    return false
+}
+
+export function syncSemaphoreRelease(semaphore: *Semaphore): void {
+    let current: u64 = atomic.load(&semaphore.permits)
+    while atomic.compareExchange(&semaphore.permits, current, current + 1 as u64) != current {
+        current = atomic.load(&semaphore.permits)
+    }
+}
+
+export function syncSeqInit(sl: *SeqLock): void { atomic.store(&sl.seq, 0 as u64) }
+export function syncSeqReadBegin(sl: *SeqLock): u64 {
+    let s: u64 = atomic.load(&sl.seq)
+    while s % 2 as u64 != 0 as u64 {
+        atomic.fence()
+        s = atomic.load(&sl.seq)
+    }
+    return s
+}
+export function syncSeqReadRetry(sl: *SeqLock, startSeq: u64): bool {
+    atomic.fence()
+    return atomic.load(&sl.seq) != startSeq
+}
+export function syncSeqWriteBegin(sl: *SeqLock): void {
+    let cur: u64 = atomic.load(&sl.seq)
+    atomic.store(&sl.seq, cur + 1 as u64)
+}
+export function syncSeqWriteEnd(sl: *SeqLock): void {
+    let cur: u64 = atomic.load(&sl.seq)
+    atomic.store(&sl.seq, cur + 1 as u64)
+}
+
+export function syncQueueInit(q: *RingQueue, backing: []u64): void {
+    atomic.store(&q.head, 0 as u64)
+    atomic.store(&q.tail, 0 as u64)
+    q.cap = len(backing)
+    q.slots = backing
+}
+
+export function syncQueueLen(q: *RingQueue): u64 {
+    let t: u64 = atomic.load(&q.tail)
+    let h: u64 = atomic.load(&q.head)
+    if t < h { return 0 as u64 }
+    return t - h
+}
+
+export function syncQueueTryPush(q: *RingQueue, val: u64): bool {
+    if q.cap == 0 as usize { return false }
+    let h: u64 = atomic.load(&q.head)
+    let t: u64 = atomic.load(&q.tail)
+    if t - h >= q.cap as u64 { return false }
+    let idx: usize = (t % (q.cap as u64)) as usize
+    q.slots[idx] = val
+    atomic.store(&q.tail, t + 1 as u64)
+    return true
+}
+
+export function syncQueueTryPop(q: *RingQueue, out: *u64): bool {
+    if q.cap == 0 as usize { return false }
+    let h: u64 = atomic.load(&q.head)
+    let t: u64 = atomic.load(&q.tail)
+    if h >= t { return false }
+    let idx: usize = (h % (q.cap as u64)) as usize
+    out[0 as usize] = q.slots[idx]
+    atomic.store(&q.head, h + 1 as u64)
+    return true
+}

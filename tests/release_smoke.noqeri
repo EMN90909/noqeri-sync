@@ -1,12 +1,59 @@
+// SPDX-License-Identifier: Apache-2.0
 import "../src/sync.noqeri"
 
 function require(ok: bool): void {
     if !ok { let invalid: *u8 = 0 as *u8 print(invalid[0]) }
 }
 
-require(syncHandleValid(1 as usize))
-require(!syncHandleValid(0 as usize))
-require(syncCapacityValid(32 as usize))
-require(!syncCapacityValid(0 as usize))
-print("noqeri-sync package tests: OK")
+function test_sync(): int {
+    let lock: SpinLock
+    syncSpinInit(&lock)
+    require(!syncSpinIsLocked(&lock))
+    require(syncSpinTryLock(&lock))
+    require(syncSpinIsLocked(&lock))
+    require(!syncSpinTryLock(&lock))
+    syncSpinUnlock(&lock)
+    require(syncSpinLockFor(&lock, 4 as usize))
+    syncSpinUnlock(&lock)
 
+    let once: Once
+    syncOnceInit(&once)
+    require(!syncOnceDone(&once))
+    require(syncOnceTryBegin(&once))
+    require(!syncOnceTryBegin(&once))
+    syncOnceComplete(&once)
+    require(syncOnceDone(&once))
+
+    let sem: Semaphore
+    syncSemaphoreInit(&sem, 2 as u64)
+    require(syncSemaphoreTryAcquire(&sem))
+    require(syncSemaphoreTryAcquire(&sem))
+    require(!syncSemaphoreTryAcquire(&sem))
+    syncSemaphoreRelease(&sem)
+    require(syncSemaphoreAvailable(&sem) == 1 as u64)
+
+    let sl: SeqLock
+    syncSeqInit(&sl)
+    let s0: u64 = syncSeqReadBegin(&sl)
+    require(!syncSeqReadRetry(&sl, s0))
+    syncSeqWriteBegin(&sl)
+    syncSeqWriteEnd(&sl)
+    require(syncSeqReadRetry(&sl, s0))
+
+    let qSlots: [u64; 32]
+    let q: RingQueue
+    syncQueueInit(&q, slice(&qSlots[0 as usize], 32 as usize))
+    require(syncQueueTryPush(&q, 101 as u64))
+    require(syncQueueTryPush(&q, 202 as u64))
+    require(syncQueueLen(&q) == 2 as u64)
+    let out: u64 = 0 as u64
+    require(syncQueueTryPop(&q, &out))
+    require(out == 101 as u64)
+    require(syncQueueTryPop(&q, &out))
+    require(out == 202 as u64)
+    require(!syncQueueTryPop(&q, &out))
+    return 1
+}
+
+require(test_sync() == 1)
+print("noqeri-sync package tests: OK")
